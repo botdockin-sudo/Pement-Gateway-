@@ -1,14 +1,13 @@
 const express = require("express");
 const fetch = require("node-fetch");
+const cors = require("cors");
 
 const app = express();
 app.use(express.json());
+app.use(cors());
 
-// 🔐 apni ZapUPI API key daalo
+// 🔐 API KEY
 const ZAP_KEY = "zap9d12dc7dbc63c120a91350a2f000793c";
-
-// 🔐 PHP secret (optional)
-const SECRET = "zapupi_secure_987654";
 
 // 🟢 TEST ROUTE
 app.get("/", (req, res) => {
@@ -16,15 +15,10 @@ app.get("/", (req, res) => {
 });
 
 
-// 🔹 CREATE ORDER
-app.post("/create-order", async (req, res) => {
+// 🔥 CREATE ORDER + DIRECT REDIRECT
+app.get("/create-order/:amount", async (req, res) => {
     try {
-        const { amount } = req.body;
-
-        if (!amount) {
-            return res.json({ error: "Amount missing" });
-        }
-
+        const amount = req.params.amount;
         const order_id = "ORD_" + Date.now();
 
         const params = new URLSearchParams();
@@ -45,34 +39,31 @@ app.post("/create-order", async (req, res) => {
         console.log("Create Order:", data);
 
         if (!data.payment_url) {
-            return res.json({ error: "No payment link", full: data });
+            return res.send("Payment link error");
         }
 
-        res.json({
-            payment_url: data.payment_url,
-            order_id: order_id
-        });
+        // 🔥 REAL PAYMENT REDIRECT
+        return res.redirect(data.payment_url);
 
     } catch (err) {
-        console.error("ERROR:", err);
-        res.status(500).json({ error: "Server error" });
+        console.error(err);
+        res.send("Server error");
     }
 });
 
 
-// 🔹 WEBHOOK (ZapUPI se)
+// 🔥 WEBHOOK (ZapUPI se)
 app.post("/webhook", async (req, res) => {
     const data = req.body;
 
     console.log("Webhook:", data);
 
-    // ❌ Ignore failed
     if (data.status !== "Success") {
         return res.send("Ignored");
     }
 
     try {
-        // 🔥 VERIFY FROM ZapUPI
+        // 🔥 VERIFY PAYMENT
         const params = new URLSearchParams();
         params.append("zap_key", ZAP_KEY);
         params.append("order_id", data.order_id);
@@ -89,28 +80,18 @@ app.post("/webhook", async (req, res) => {
 
         console.log("Verify Result:", result);
 
-        // ✅ FINAL CHECK
         if (result.status === "Success") {
             console.log("Payment verified ✅");
 
-            // 🔁 PHP ko bhejna (optional)
-            await fetch("https://yourdomain.com/api/upgrade.php", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "x-secret": SECRET
-                },
-                body: JSON.stringify(result)
-            });
-
-            console.log("User upgrade call sent");
+            // 👉 Yaha user upgrade logic lagao
+            // example:
+            // update DB, activate plan, etc.
         }
 
     } catch (err) {
         console.error("Webhook Error:", err);
     }
 
-    // ⚠️ Always respond fast
     res.send("OK");
 });
 
