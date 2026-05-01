@@ -6,98 +6,56 @@ const cors = require("cors");
 
 const app = express();
 
-// ==========================
-// Middlewares
-// ==========================
 app.use(express.json());
 app.use(cors());
 
+const PORT = process.env.PORT || 3000;
+
 // ==========================
-// Health
+// MEMORY STORE
+// ==========================
+const orders = {};
+
+// ==========================
+// HOME
 // ==========================
 app.get("/", (req, res) => {
   res.send("Server running 🚀");
 });
 
 // ==========================
-// Validation
-// ==========================
-function isValidAmount(amount) {
-  return /^[0-9]+(\.[0-9]{1,2})?$/.test(amount);
-}
-
-// ==========================
-// Timeout Fetch
-// ==========================
-async function fetchWithTimeout(url, options, timeout = 10000) {
-  return Promise.race([
-    fetch(url, options),
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("Timeout")), timeout)
-    )
-  ]);
-}
-
-// ==========================
-// Retry Logic
-// ==========================
-async function createOrderWithRetry(bodyData, retries = 2) {
-  try {
-    const response = await fetchWithTimeout(
-      "https://pay.zapupi.com/api/create-order",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(bodyData)
-      },
-      10000
-    );
-
-    return await response.json();
-
-  } catch (err) {
-    console.log("Retrying...", err.message);
-
-    if (retries > 0) {
-      return createOrderWithRetry(bodyData, retries - 1);
-    }
-
-    throw err;
-  }
-}
-
-// ==========================
 // CREATE ORDER
 // ==========================
 app.post("/api/create-order", async (req, res) => {
   try {
-    let { amount } = req.body;
+    const { amount } = req.body;
 
-    amount = String(amount);
-
-    if (!isValidAmount(amount)) {
-      return res.status(400).json({ error: "Invalid amount" });
+    if (!amount) {
+      return res.status(400).json({ error: "Amount required" });
     }
 
     const orderId = "ORD" + Date.now();
 
-    const bodyData = {
-      zap_key: process.env.ZAP_KEY,
-      order_id: orderId,
-      amount: amount,
-      customer_mobile: "9999999999" // 🔥 dummy mobile fix
-    };
+    const response = await fetch("https://pay.zapupi.com/api/create-order", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        zap_key: process.env.ZAP_KEY,
+        order_id: orderId,
+        amount: amount
+      })
+    });
 
-    const data = await createOrderWithRetry(bodyData);
+    const data = await response.json();
 
-    if (!data || data.status !== "success") {
-      return res.status(400).json({
-        success: false,
-        data: data
-      });
+    if (data.status !== "success") {
+      return res.status(400).json(data);
     }
+
+    // pending store
+    orders[orderId] = "Pending";
 
     res.json({
       success: true,
@@ -106,103 +64,51 @@ app.post("/api/create-order", async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Create order error:", err.message);
-
-    res.status(500).json({
-      success: false,
-      message: "Server busy, try again"
-    });
+    console.error(err);
+    res.status(500).json({ error: err.message });
   }
 });
 
 // ==========================
-// ORDER STATUS
+// LOCAL STATUS (WEBHOOK BASED)
 // ==========================
-app.post("/api/order-status", async (req, res) => {
-  try {
-    const { order_id } = req.body;
+app.post("/api/check-status", (req, res) => {
+  const { order_id } = req.body;
 
-    if (!order_id) {
-      return res.status(400).json({
-        success: false,
-        message: "order_id required"
-      });
-    }
+  const status = orders[order_id] || "Pending";
 
-    const response = await fetchWithTimeout(
-      "https://pay.zapupi.com/api/order-status",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          zap_key: process.env.ZAP_KEY,
-          order_id: order_id
-        })
-      },
-      10000
-    );
-
-    const data = await response.json();
-
-    res.json({
-      success: true,
-      data: data
-    });
-
-  } catch (err) {
-    console.error("Order status error:", err.message);
-
-    res.status(500).json({
-      success: false,
-      message: "Failed to check status"
-    });
-  }
+  res.json({
+    status: status
+  });
 });
 
 // ==========================
 // WEBHOOK
 // ==========================
 app.post("/webhook", (req, res) => {
-  try {
-    const data = req.body;
+  const data = req.body;
 
-    console.log("📩 Webhook received:", data);
+  console.log("📩 Webhook:", data);
 
-    if (!data || !data.order_id) {
-      return res.status(400).send("Invalid");
-    }
+  if (data && data.order_id) {
+    orders[data.order_id] = data.status;
 
-    const status = (data.status || "").toLowerCase();
-
-    if (status === "success") {
+    if (data.status === "Success") {
       console.log("✅ Payment Success:", data.order_id);
-    } else if (status === "pending") {
-      console.log("⏳ Payment Pending:", data.order_id);
     } else {
       console.log("❌ Payment Failed:", data.order_id);
     }
-
-    // ⚡ VERY IMPORTANT
-    res.status(200).send("OK");
-
-  } catch (err) {
-    console.error("Webhook error:", err);
-    res.sendStatus(500);
   }
+
+  res.status(200).send("OK");
 });
 
-// ==========================
-// DEBUG
-// ==========================
+// debug
 app.get("/webhook", (req, res) => {
   res.send("Webhook alive ✅");
 });
 
 // ==========================
-const PORT = process.env.PORT || 3000;
-
 app.listen(PORT, "0.0.0.0", () => {
   console.log("Server running on port " + PORT);
 });
