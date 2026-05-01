@@ -1,96 +1,122 @@
+require("dotenv").config();
+
 const express = require("express");
-const axios = require("axios");
+const fetch = require("node-fetch");
+const cors = require("cors");
 
 const app = express();
+
+// ==========================
 app.use(express.json());
-
-// 🔐 API KEY
-const ZAP_KEY = "YOUR_ZAP_KEY";
+app.use(cors());
 
 // ==========================
-// CREATE ORDER (mobile optional)
+app.get("/", (req, res) => {
+  res.send("Server running 🚀");
+});
+
 // ==========================
-app.post("/create-order", async (req, res) => {
+// Validation (only amount)
+// ==========================
+function isValidAmount(amount) {
+  return /^[0-9]+(\.[0-9]{1,2})?$/.test(amount);
+}
+
+// ==========================
+// CREATE ORDER
+// ==========================
+app.post("/api/create-order", async (req, res) => {
   try {
-    const { order_id, amount } = req.body;
+    let { amount } = req.body;
 
-    const response = await axios.post(
-      "https://pay.zapupi.com/api/create-order",
-      {
-        zap_key: ZAP_KEY,
-        order_id: order_id,
-        amount: amount,
-        // ❌ mobile hata diya
-        remark: "Test Order"
-      }
-    );
+    amount = String(amount);
 
-    res.json(response.data);
+    if (!isValidAmount(amount)) {
+      return res.status(400).json({ error: "Invalid amount" });
+    }
+
+    const orderId = "ORD" + Date.now();
+
+    const response = await fetch("https://pay.zapupi.com/api/create-order", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        zap_key: process.env.ZAP_KEY,
+        order_id: orderId,
+        amount: amount
+        // ❌ mobile removed
+      })
+    });
+
+    const data = await response.json();
+
+    if (data.status !== "success") {
+      return res.status(400).json(data);
+    }
+
+    res.json({
+      success: true,
+      payment_url: data.payment_url,
+      order_id: orderId
+    });
 
   } catch (err) {
-    console.error("Create Order Error:", err.message);
-    res.status(500).json({ error: "Failed to create order" });
+    console.error(err);
+    res.status(500).json({ error: err.message });
   }
 });
 
 // ==========================
-// CHECK ORDER STATUS
+// ORDER STATUS
 // ==========================
-app.post("/check-status", async (req, res) => {
+app.post("/api/order-status", async (req, res) => {
   try {
     const { order_id } = req.body;
 
-    const response = await axios.post(
-      "https://pay.zapupi.com/api/order-status",
-      {
-        zap_key: ZAP_KEY,
+    const response = await fetch("https://pay.zapupi.com/api/order-status", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        zap_key: process.env.ZAP_KEY,
         order_id: order_id
-      }
-    );
+      })
+    });
 
-    // Example response handling
-    if (response.data.status === "SUCCESS") {
-      console.log("✅ Payment Success:", order_id);
-    } else {
-      console.log("❌ Payment Pending/Failed:", order_id);
-    }
+    const data = await response.json();
 
-    res.json(response.data);
+    res.json(data);
 
   } catch (err) {
-    console.error("Status Check Error:", err.message);
-    res.status(500).json({ error: "Failed to check status" });
+    res.status(500).json({ error: err.message });
   }
 });
 
 // ==========================
-// WEBHOOK (AUTO VERIFY)
+// WEBHOOK
 // ==========================
 app.post("/webhook", (req, res) => {
-  try {
-    const data = req.body;
+  const data = req.body;
 
-    if (data.status === "SUCCESS") {
-      console.log("✅ Payment Success:", data.order_id);
-    } else {
-      console.log("❌ Payment Failed:", data.order_id);
-    }
+  console.log("Webhook:", data);
 
-    res.status(200).send("OK");
-
-  } catch (err) {
-    console.error("Webhook error:", err);
-    res.sendStatus(500);
+  if (data.status === "Success" || data.status === "success") {
+    console.log("✅ Payment Success:", data.order_id);
+  } else {
+    console.log("❌ Payment Failed:", data.order_id);
   }
+
+  res.status(200).send("OK");
 });
 
-// GET webhook (debug)
+// debug
 app.get("/webhook", (req, res) => {
   res.send("Webhook alive ✅");
 });
 
-// ==========================
-// START SERVER
 // ==========================
 const PORT = process.env.PORT || 3000;
 
