@@ -6,17 +6,21 @@ const cors = require("cors");
 
 const app = express();
 
-// ✅ allow all origins (frontend use ke liye)
-app.use(cors({
-  origin: "*"
-}));
-
+// ==========================
+// Middlewares
+// ==========================
 app.use(express.json());
-
-const PORT = process.env.PORT || 3000;
+app.use(cors());
 
 // ==========================
-// Validation
+// Health check
+// ==========================
+app.get("/", (req, res) => {
+  res.send("Server running 🚀");
+});
+
+// ==========================
+// Validation functions
 // ==========================
 function isValidAmount(amount) {
   return /^[0-9]+(\.[0-9]{1,2})?$/.test(amount);
@@ -27,7 +31,7 @@ function isValidMobile(mobile) {
 }
 
 // ==========================
-// API Endpoint
+// Create Order API
 // ==========================
 app.post("/api/create-order", async (req, res) => {
   try {
@@ -36,6 +40,7 @@ app.post("/api/create-order", async (req, res) => {
     amount = String(amount);
     mobile = String(mobile);
 
+    // ❌ validation
     if (!isValidAmount(amount)) {
       return res.status(400).json({ error: "Invalid amount" });
     }
@@ -44,6 +49,7 @@ app.post("/api/create-order", async (req, res) => {
       return res.status(400).json({ error: "Invalid mobile" });
     }
 
+    // ✅ clean order id (no slash)
     const orderId = "ORD" + Date.now();
 
     const response = await fetch("https://pay.zapupi.com/api/create-order", {
@@ -67,14 +73,59 @@ app.post("/api/create-order", async (req, res) => {
 
     res.json({
       success: true,
-      payment_url: data.payment_url
+      payment_url: data.payment_url,
+      order_id: orderId
     });
 
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({
+      error: err.message
+    });
   }
 });
 
-app.listen(PORT, () => {
-  console.log("API running 🚀");
+// ==========================
+// Webhook (MAIN FIX)
+// ==========================
+
+// POST webhook (ZapUPI yahi hit karega)
+app.post("/webhook", (req, res) => {
+  try {
+    const data = req.body;
+
+    console.log("📩 Webhook received:", data);
+
+    // basic check
+    if (!data || !data.order_id) {
+      return res.status(400).send("Invalid");
+    }
+
+    // status handling
+    if (data.status === "Success" || data.status === "success") {
+      console.log("✅ Payment Success:", data.order_id);
+    } else {
+      console.log("❌ Payment Failed:", data.order_id);
+    }
+
+    // ⚡ IMPORTANT: fast response
+    res.status(200).send("OK");
+
+  } catch (err) {
+    console.error("Webhook error:", err);
+    res.sendStatus(500);
+  }
+});
+
+// GET webhook (debug ke liye)
+app.get("/webhook", (req, res) => {
+  res.status(200).send("Webhook alive ✅");
+});
+
+// ==========================
+// Start server
+// ==========================
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log("Server running on port " + PORT);
 });
