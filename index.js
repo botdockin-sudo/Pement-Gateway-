@@ -5,22 +5,46 @@ const fetch = require("node-fetch");
 const cors = require("cors");
 
 const app = express();
+
+// ✅ allow all origins (frontend use ke liye)
+app.use(cors({
+  origin: "*"
+}));
+
 app.use(express.json());
-app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 
-// Home route
-app.get("/", (req, res) => {
-  res.send("Server running 🚀");
-});
+// ==========================
+// Validation
+// ==========================
+function isValidAmount(amount) {
+  return /^[0-9]+(\.[0-9]{1,2})?$/.test(amount);
+}
+
+function isValidMobile(mobile) {
+  return /^[6-9][0-9]{9}$/.test(mobile);
+}
 
 // ==========================
-// Create Order API
+// API Endpoint
 // ==========================
-app.post("/create-order", async (req, res) => {
+app.post("/api/create-order", async (req, res) => {
   try {
-    const { amount, mobile } = req.body;
+    let { amount, mobile } = req.body;
+
+    amount = String(amount);
+    mobile = String(mobile);
+
+    if (!isValidAmount(amount)) {
+      return res.status(400).json({ error: "Invalid amount" });
+    }
+
+    if (!isValidMobile(mobile)) {
+      return res.status(400).json({ error: "Invalid mobile" });
+    }
+
+    const orderId = "ORD" + Date.now();
 
     const response = await fetch("https://pay.zapupi.com/api/create-order", {
       method: "POST",
@@ -29,40 +53,28 @@ app.post("/create-order", async (req, res) => {
       },
       body: JSON.stringify({
         zap_key: process.env.ZAP_KEY,
-        order_id: "ORD_" + Date.now(),
+        order_id: orderId,
         amount: amount,
-        customer_mobile: mobile,
-        remark: "Test Order",
-        success_url: "https://your-app.onrender.com/success",
-        failed_url: "https://your-app.onrender.com/failed",
-        timeout_url: "https://your-app.onrender.com/timeout"
+        customer_mobile: mobile
       })
     });
 
     const data = await response.json();
 
+    if (data.status !== "success") {
+      return res.status(400).json(data);
+    }
+
     res.json({
       success: true,
-      payment_url: data.payment_url,
-      full: data
+      payment_url: data.payment_url
     });
 
   } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: err.message
-    });
+    res.status(500).json({ error: err.message });
   }
 });
 
-// ==========================
-// Webhook
-// ==========================
-app.post("/webhook", (req, res) => {
-  console.log("Webhook:", req.body);
-  res.sendStatus(200);
-});
-
 app.listen(PORT, () => {
-  console.log("Server running on port " + PORT);
+  console.log("API running 🚀");
 });
